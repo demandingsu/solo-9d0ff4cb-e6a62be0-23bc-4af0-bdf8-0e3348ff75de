@@ -23,17 +23,20 @@ Model
   paginated again.
 
 With at most 12 sections, all compositions of the remaining sections are
-enumerated (at most 2^11).  A composition fixes the page contents; reprints
-only ever *add* an alternative copy of one section, so for the page-count
-question every reprint that fits is enabled.  The smallest reprint set is then
-searched only among the compositions that achieve the minimum page count.
-Feasibility is a reachability test over (step, page) states using page
-bitmasks.
+enumerated (at most 2^11).  A composition fixes the page contents.  Feasible
+page counts are still screened with the maximal-reprint layout using a
+(step, page) reachability bitmask test, because reprints only ever *add* an
+alternative copy.  For each minimum-page composition,
+:func:`select_reprint_pages` then finds the minimum reprint set in one linear
+``O(sections + pages + steps)`` backward/forward pass instead of retrying
+reprint subsets for the same pagination: the pointwise-lowest viable route
+turns onto exactly the reprints every feasible route needs, so repeated use
+of one page-head reprint is collected once.  Locked pages and their reprints
+are always reproduced verbatim, even when unused.
 """
 
 from __future__ import annotations
 
-import itertools
 from dataclasses import dataclass, field
 from typing import Iterator, Sequence
 
@@ -340,11 +343,113 @@ def _solver_candidates(
         yield tuple(len(chunk) for chunk in chunks[:-1]), list(locked) + suffix
 
 
-def _strip_reprints(layout: Sequence[Page], keep: set[int]) -> list[Page]:
-    return [
-        page if index in keep or page.reprint is None else Page(page.sections, None)
-        for index, page in enumerate(layout)
-    ]
+def _apply_reprint_choice(
+    layout: Sequence[Page], picked: set[int] | frozenset[int], locked_count: int
+) -> list[Page]:
+    """Keep only ``picked`` optional reprints; locked reprints are always kept.
+
+    Locked pages (indices below ``locked_count``) are reproduced verbatim, so
+    their head reprints stay on the page -- occupying lines and remaining
+    playable -- even when the new performance never uses them.
+    """
+    result = []
+    for index, page in enumerate(layout):
+        keep = page.reprint is None or index < locked_count or index in picked
+        result.append(page if keep else Page(page.sections, None))
+    return result
+
+
+def select_reprint_pages(
+    layout: Sequence[Page],
+    steps: Sequence[int],
+    rests: Sequence[bool],
+    section_count: int,
+    locked_count: int = 0,
+) -> tuple[frozenset[int], int] | None:
+    """Find the minimum optional head reprints for fixed page bodies.
+
+    Returns ``(picked, work)`` where ``picked`` is the set of 0-based page
+    indices (always at or above ``locked_count``) whose optional head reprint
+    has to be present.  Returns ``None`` when even the *maximal* layout --
+    every reprint that fits enabled, including locked ones -- cannot carry the
+    whole performance.
+
+    Why one linear pass is enough
+    -----------------------------
+    Every section has one body page ``home[s]`` and at most one extra copy, as
+    the head reprint of the immediately following page.  A step on section
+    ``s`` can therefore sit on ``home[s]`` or on ``home[s] + 1``; a reprint
+    only ever extends the usable page *upward*.  Compute backward-reachable
+    page bitmasks and reconstruct, from page 1, the pointwise-lowest viable
+    page for each step.  Any optional reprint this lowest path turns onto is
+    in fact required by **every** feasible choice (a higher alternative can
+    only reach that page through the same reprint), so the collected set is
+    the unique minimum.  When the same reprint carries several steps its page
+    index is added to a set once -- repeated use counts once.
+
+    Cost is ``O(section_count + len(layout) + len(steps))`` fixed-width page
+    mask operations (at most :data:`MAX_SECTIONS` pages, so each mask op is a
+    constant-width integer operation).  ``work`` counts the linear scan
+    iterations for callers/tests that want to verify the bound.
+    """
+    page_count = len(layout)
+    if page_count == 0 or not steps:
+        return None
+
+    home = [-1] * (section_count + 1)
+    work = 0
+    for index, page in enumerate(layout):
+        for section in page.sections:
+            home[section] = index
+            work += 1
+        work += 1
+
+    masks = _copy_masks(layout, section_count)
+    work += section_count + page_count
+    full = (1 << page_count) - 1
+
+    # backward[k]: bit p set iff, starting the k-th step on page p, the tail
+    # k..end can still be played under the maximal copy masks.
+    backward = [0] * len(steps)
+    backward[-1] = masks[steps[-1]]
+    work += 1
+    for k in range(len(steps) - 2, -1, -1):
+        nxt = backward[k + 1]
+        if rests[k]:
+            predecessors = (nxt | (nxt << 1) | (nxt >> 1)) & full
+        else:
+            predecessors = nxt
+        backward[k] = predecessors & masks[steps[k]]
+        work += 1
+
+    # The first step must start on page 1 (bit 0), and the suffix must work.
+    if not (backward[0] & 1):
+        return None
+
+    picked: set[int] = set()
+    current = 0
+    for k in range(1, len(steps)):
+        bit = 1 << current
+        if rests[k - 1]:
+            reachable = (bit | (bit << 1) | (bit >> 1)) & full
+        else:
+            reachable = bit
+        candidates = backward[k] & reachable
+        if not candidates:
+            # Cannot happen when backward[0] bit 0 is set; kept defensive.
+            return None
+        lowest = candidates & -candidates
+        page = lowest.bit_length() - 1
+        section = steps[k]
+        # A chosen page different from the body page means the head reprint is
+        # used.  Locked reprints are retained regardless, so only collect
+        # unlocked page indices.
+        if home[section] != page and page >= locked_count:
+            picked.add(page)
+        current = page
+        work += 1
+
+    return frozenset(picked), work
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +496,9 @@ def solve(
     remaining = list(range(covered + 1, len(lines) + 1))
     locked_reprints = sum(page.reprint is not None for page in locked)
 
-    # Phase 1: minimal page count, with every fitting reprint enabled.
+    # Phase 1: minimum page count with every fitting reprint enabled.  Reprints
+    # only add alternative copies, so a chunking whose maximal layout is
+    # infeasible cannot be rescued by any reprint subset.
     candidates: list[tuple[tuple[int, ...], list[Page]]] = []
     for signature, layout in _solver_candidates(lines, capacity, remaining, locked):
         if feasible(layout, steps, rests, len(lines)):
@@ -403,51 +510,46 @@ def solve(
     page_candidates = [
         (signature, layout) for signature, layout in candidates if len(layout) == best_pages
     ]
-    # Earlier breaks first: chunk sizes are compared left to right, so a
-    # smaller first page wins.  Reprint counts are then minimised.
+    # Lexicographic chunk sizes compare breaks left to right: a smaller first
+    # chunk means an earlier first page break.
     page_candidates.sort(key=lambda item: item[0])
 
+    # Phase 2: one linear pass per minimum-page pagination finds its unique
+    # minimum optional-reprint set -- no subset re-trials for the same layout.
+    # Rank by total reprints (locked ones count and stay), then earlier break.
+    best_key: tuple[int, tuple[int, ...]] | None = None
     best_layout: list[Page] | None = None
-    best_reprints: int | None = None
-    best_assignment: list[dict] | None = None
-
-    for _signature, maximal in page_candidates:
-        if not feasible(maximal, steps, rests, len(lines)):
-            # Reprints only add alternatives, so no subset can be feasible.
+    for signature, maximal in page_candidates:
+        choice = select_reprint_pages(
+            maximal, steps, rests, len(lines), locked_count=len(locked)
+        )
+        if choice is None:  # should not happen: phase 1 already ruled this out
             continue
-        available = [
-            index
-            for index in range(len(locked), len(maximal))
-            if maximal[index].reprint is not None
-        ]
-        for size in range(0, len(available) + 1):
-            total = locked_reprints + size
-            if best_reprints is not None and total >= best_reprints:
-                break
-            found = False
-            for picked in itertools.combinations(available, size):
-                layout = _strip_reprints(maximal, set(picked))
-                assignment = perform(layout, steps, rests, len(lines))
-                if assignment is None:
-                    continue
-                best_layout, best_reprints, best_assignment = layout, total, assignment
-                found = True
-                break
-            if found:
-                break
-        if best_layout is not None and best_reprints == locked_reprints:
-            # Zero suffix reprints is optimal; candidates are in break order,
-            # so this layout is the overall winner.
+        picked, _work = choice
+        reprint_total = locked_reprints + len(picked)
+        key = (reprint_total, signature)
+        if best_key is None or key < best_key:
+            best_key = key
+            best_layout = _apply_reprint_choice(maximal, picked, len(locked))
+        if len(picked) == 0:
+            # No added reprint is the global floor; signatures run earliest
+            # break first, so the first such layout is the overall winner.
             break
 
-    assert best_layout is not None and best_assignment is not None
+    if best_key is None or best_layout is None:
+        return _unsolvable(lines, capacity, locked, steps, rests, previous)
+    assignment = perform(best_layout, steps, rests, len(lines))
+    if assignment is None:  # the selector already proved feasibility
+        return _unsolvable(lines, capacity, locked, steps, rests, previous)
+    best_reprints = best_key[0]
+
     return Outcome(
         status="solved",
         message="已排好。按下面的页码逐页翻谱即可。",
         pages=_page_dicts(best_layout, lines, capacity, locked_count=len(locked)),
-        steps=best_assignment,
-        total_pages=len(best_layout),
-        reprints=sum(page.reprint is not None for page in best_layout),
+        steps=assignment,
+        total_pages=best_pages,
+        reprints=best_reprints,
         locked_pages=len(locked),
     )
 
