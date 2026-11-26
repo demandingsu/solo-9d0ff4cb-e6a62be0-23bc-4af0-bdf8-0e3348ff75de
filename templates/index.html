@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>排练分谱排页</title>
+<style>
+  :root {
+    --ink: #17202a;
+    --muted: #5b6773;
+    --paper: #fbf8f1;
+    --line: #d9d2c3;
+    --accent: #8b3a2f;
+    --accent-soft: #f4e3de;
+    --ok: #1f6f4a;
+    --ok-soft: #e5f3eb;
+    --warn: #8a4b00;
+    --warn-soft: #fff1d6;
+    --bad: #a01e1e;
+    --bad-soft: #fbe4e4;
+    --shadow: 0 1px 2px rgba(23, 32, 42, .08), 0 8px 24px rgba(23, 32, 42, .06);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    color: var(--ink);
+    background: #efe9dd;
+    font: 16px/1.55 "Noto Serif SC", "Songti SC", "STSong", Georgia, serif;
+  }
+  header.masthead {
+    padding: 28px clamp(16px, 5vw, 48px) 18px;
+    background: var(--paper);
+    border-bottom: 3px double var(--line);
+  }
+  header.masthead h1 {
+    margin: 0 0 4px;
+    font-size: clamp(24px, 3.2vw, 34px);
+    letter-spacing: .04em;
+  }
+  header.masthead p { margin: 0; color: var(--muted); max-width: 72ch; }
+  main {
+    display: grid;
+    grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+    gap: clamp(16px, 2.4vw, 28px);
+    padding: clamp(16px, 3vw, 32px) clamp(16px, 5vw, 48px) 64px;
+    align-items: start;
+  }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    padding: 20px 22px;
+  }
+  .card + .card { margin-top: 18px; }
+  h2 { margin: 0 0 10px; font-size: 19px; letter-spacing: .03em; }
+  h3 { margin: 18px 0 8px; font-size: 16px; }
+  p.hint, .hint { color: var(--muted); font-size: 14px; margin: 6px 0; }
+  fieldset { border: 0; padding: 0; margin: 0 0 16px; }
+  legend { font-weight: 700; padding: 0; margin-bottom: 8px; }
+  .rows { display: grid; gap: 8px; }
+  .row {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+  }
+  .row .index { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; font-size: 14px; }
+  .row.musical { grid-template-columns: 28px minmax(0, 1fr); }
+  .row .unit { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  input[type="number"], input[type="text"], select {
+    width: 100%;
+    padding: 8px 10px;
+    font: inherit;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fffdf8;
+    color: var(--ink);
+  }
+  input[type="number"] { font-variant-numeric: tabular-nums; }
+  input:focus-visible, button:focus-visible, a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: #fffdf8;
+    color: var(--ink);
+    padding: 7px 12px;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    padding: 11px 20px;
+  }
+  button.primary:hover { background: #742d24; color: #fff; }
+  button.icon { padding: 4px 9px; font-size: 14px; line-height: 1.2; }
+  button[disabled] { opacity: .45; cursor: not-allowed; }
+  .inline { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .rest-row { display: flex; align-items: center; gap: 8px; margin: 2px 0 2px 36px; color: var(--muted); font-size: 14px; }
+  .rest-row input { accent-color: var(--accent); width: 18px; height: 18px; }
+  .capacity { display: flex; align-items: center; gap: 10px; }
+  .capacity input { max-width: 100px; }
+  .lockbox {
+    margin-top: 16px;
+    padding: 12px 14px;
+    border: 1px dashed var(--line);
+    border-radius: 8px;
+    background: #fffdf8;
+  }
+  .lockbox label { font-weight: 700; display: block; margin-bottom: 4px; }
+  .lockbox input { max-width: 100px; }
+  .error, .unsolvable, .solved-banner, .lastgood {
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 16px;
+  }
+  .error { background: var(--bad-soft); border: 1px solid #e3b4b4; color: var(--bad); }
+  .unsolvable { background: var(--bad-soft); border: 1px solid #e3b4b4; }
+  .unsolvable strong { color: var(--bad); }
+  .solved-banner { background: var(--ok-soft); border: 1px solid #b9dcc8; color: #145232; }
+  .solved-banner .big { font-size: 22px; font-weight: 700; }
+  .lastgood { background: var(--warn-soft); border: 1px solid #e8cd94; }
+  .metrics { display: flex; gap: 18px; flex-wrap: wrap; margin: 4px 0 0; padding: 0; list-style: none; }
+  .metrics li { font-size: 14px; color: var(--muted); }
+  .metrics b { color: var(--ink); font-size: 17px; font-variant-numeric: tabular-nums; }
+  .pages { display: grid; gap: 12px; margin-top: 14px; }
+  .pagecard {
+    border: 1px solid var(--line);
+    border-left: 5px solid var(--accent);
+    border-radius: 8px;
+    background: #fffdf8;
+    padding: 10px 14px;
+  }
+  .pagecard .pg-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .pagecard .pg-title { font-weight: 700; }
+  .pagecard .pg-meta { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .lockbadge { font-size: 12px; background: var(--accent-soft); color: var(--accent); padding: 1px 8px; border-radius: 99px; border: 1px solid #e3c3ba; }
+  .reprinted { color: var(--warn); font-size: 13px; margin: 3px 0 6px; }
+  .sections { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0 2px; }
+  .section-chip {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #f7f2e7;
+    padding: 4px 9px;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+  }
+  .section-chip.reprint-chip { border-style: dashed; background: #fff4e2; color: var(--warn); }
+  .table-wrap { overflow-x: auto; margin-top: 8px; }
+  table.steps { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+  table.steps th, table.steps td { border-bottom: 1px solid var(--line); padding: 7px 9px; text-align: left; vertical-align: top; }
+  table.steps th { background: #f3ede2; font-size: 13px; letter-spacing: .04em; color: var(--muted); }
+  table.steps td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.turn { background: #fff6e2; }
+  .turn-mark { color: var(--warn); font-weight: 700; }
+  .stay-mark { color: var(--muted); }
+  .legend { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  details.rules { margin-top: 18px; }
+  details.rules summary { cursor: pointer; font-weight: 700; color: var(--accent); }
+  details.rules ol { margin: 8px 0 0; padding-left: 20px; color: var(--muted); font-size: 14px; }
+  .printonly { display: none; }
+  @media print {
+    body { background: #fff; }
+    header.masthead, form.panel, .no-print, details.rules, .lastgood { display: none !important; }
+    main { display: block; padding: 0; }
+    .card { box-shadow: none; border: 0; padding: 0; }
+    .pagecard { break-inside: avoid; }
+    table.steps { font-size: 11px; }
+  }
+</style>
+</head>
+<body>
+<header class="masthead">
+  <h1>排练分谱 · 排页</h1>
+  <p>给乐手的排练分谱排页：按谱面顺序把小节接排到各页，用空拍翻页，反复时可以用不同页上的印本。算出页数最少的排法和每一步的页码。</p>
+</header>
+
+<main>
+  <form class="panel card" method="post" action="{{ url_for('solve_route') }}" id="solve-form" novalidate>
+    <h2>谱面设置</h2>
+
+    {% if error %}
+      <div class="error" role="alert"><strong>输入有误：</strong>{{ error }}</div>
+    {% endif %}
+
+    <fieldset>
+      <legend>小节与谱面行数 <span class="hint">（最多 {{ max_sections }} 节）</span></legend>
+      <div class="rows" id="section-rows">
+        {% for value in lines %}
+        <div class="row section-row">
+          <span class="index">{{ loop.index }}.</span>
+          <input type="number" name="line" value="{{ value }}" min="1" max="60" step="1" required aria-label="第 {{ loop.index }} 小节的谱面行数">
+          <span class="unit">行</span>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="inline" style="margin-top:10px">
+        <button type="button" class="icon" data-add-section>＋ 添加小节</button>
+        <button type="button" class="icon" data-remove-section>－ 删除末节</button>
+        <span class="hint" id="section-count">已填 {{ lines|length }} 节</span>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <div class="capacity">
+        <label for="capacity"><strong>每页可排行数</strong></label>
+        <input type="number" id="capacity" name="capacity" value="{{ capacity }}" min="1" max="60" step="1" required>
+        <span class="hint">行／页（页首重印也占行数）</span>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>实际演奏顺序 <span class="hint">（最多 {{ max_steps }} 步，先演奏第 1 小节）</span></legend>
+      <div id="step-rows">
+        {% for step in steps %}
+        <div class="row step-row">
+          <span class="index">{{ loop.index }}.</span>
+          <input type="number" name="step" value="{{ step }}" min="1" max="{{ max_sections }}" step="1" required aria-label="第 {{ loop.index }} 步演奏的小节">
+          <span class="unit">小节</span>
+          <button type="button" class="icon" data-remove-step aria-label="删除第 {{ loop.index }} 步">✕</button>
+        </div>
+        {% if not loop.last %}
+        <div class="rest-row">
+          <input type="checkbox" name="rest_{{ loop.index }}" id="rest_{{ loop.index }}" {% if rests[loop.index0] %}checked{% endif %}>
+          <label for="rest_{{ loop.index }}">第 {{ loop.index }} 步之后有空拍，可翻一页</label>
+        </div>
+        {% endif %}
+        {% endfor %}
+      </div>
+      <div class="inline" style="margin-top:10px">
+        <button type="button" class="icon" data-add-step>＋ 添加一步</button>
+        <button type="button" class="icon" data-remove-last-step>－ 删除末步</button>
+        <span class="hint" id="step-count">已填 {{ steps|length }} 步</span>
+      </div>
+      <p class="hint">勾选两步之间的空拍，表示演奏可以在那里向前或向后翻一页。没有空拍的两步必须留在同一页。</p>
+    </fieldset>
+
+    <div class="lockbox">
+      <label for="lock_count">锁定已印的前几页（可选）</label>
+      <div class="inline">
+        <input type="number" id="lock_count" name="lock_count" value="{{ lock_count }}" min="0" max="{{ last_pages }}" step="1" {% if last_pages == 0 %}disabled title="还没有已印的页"{% endif %}>
+        <span class="hint">
+          {% if last_pages %}
+            上次成功排出的分谱共 {{ last_pages }} 页。锁定后这些页原样保留，只重排后面的小节。
+          {% else %}
+            还没有成功排过的分谱；先正常排一次才能锁页。
+          {% endif %}
+        </span>
+      </div>
+    </div>
+
+    <div class="inline" style="margin-top:18px">
+      <button type="submit" class="primary">排页</button>
+      <button type="button" class="no-print" id="clear-lock" {% if last_pages == 0 %}disabled{% endif %}>解除锁定</button>
+    </div>
+
+    <details class="rules">
+      <summary>排页规则</summary>
+      <ol>
+        <li>每页按谱面顺序接排新小节，页内小节连续，每节整节印在一页上。</li>
+        <li>每页除第 1 页外，可在页首重印上一页的末节；重印的谱面同样占行数。</li>
+        <li>演出从第 1 页开始。只有标有空拍的两步之间，才允许向前或向后翻 1 页；其余相邻两步必须同页。</li>
+        <li>反复演奏时，同一个小节可以用它在本页的正文，也可以用下一页页首的重印本。</li>
+        <li>优先页数最少；页数相同则重印最少，再按更靠前的页断排序。</li>
+        <li>锁定页是上次排法的前几页，重排时原样保留；若剩余小节无法接排或演奏顺序无法逐页完成，则判为无解。</li>
+      </ol>
+    </details>
+  </form>
+
+  <section class="results" aria-live="polite">
+    {% if outcome and outcome.status == 'solved' %}
+      <div class="card">
+        <div class="solved-banner">
+          <div class="big">排好了：共 {{ outcome.total_pages }} 页</div>
+          <div>{{ outcome.message }}</div>
+        </div>
+        <ul class="metrics">
+          <li>总页数 <b>{{ outcome.total_pages }}</b></li>
+          <li>页首重印 <b>{{ outcome.reprints }}</b> 处</li>
+          <li>演奏步数 <b>{{ outcome.steps|length }}</b></li>
+          {% if outcome.locked_pages %}<li>锁定保留 <b>{{ outcome.locked_pages }}</b> 页</li>{% endif %}
+        </ul>
+
+        <h3>分页表</h3>
+        <div class="pages">
+          {% for page in outcome.pages %}
+          <article class="pagecard">
+            <div class="pg-head">
+              <span class="pg-title">第 {{ page.number }} 页
+                {% if page.locked %}<span class="lockbadge">锁定保留</span>{% endif %}
+              </span>
+              <span class="pg-meta">用行 {{ page.lines_used }} / {{ page.capacity }}</span>
+            </div>
+            {% if page.reprint %}
+              <div class="reprinted">页首重印第 {{ page.reprint }} 小节（占 {{ page.reprint_lines }} 行）</div>
+            {% endif %}
+            <div class="sections">
+              {% if page.reprint %}
+                <span class="section-chip reprint-chip">重印 · 第 {{ page.reprint }} 小节</span>
+              {% endif %}
+              {% for section in page.sections %}
+                <span class="section-chip">第 {{ section }} 小节</span>
+              {% endfor %}
+            </div>
+          </article>
+          {% endfor %}
+        </div>
+
+        <h3>每一步的页码</h3>
+        <div class="table-wrap">
+          <table class="steps">
+            <thead>
+              <tr><th>步</th><th>小节</th><th>页</th><th>用哪份印本</th><th>翻谱</th></tr>
+            </thead>
+            <tbody>
+              {% for step in outcome.steps %}
+              <tr class="{% if step.move.startswith('空拍') %}turn{% endif %}">
+                <td class="num">{{ step.number }}</td>
+                <td class="num">第 {{ step.section }} 小节</td>
+                <td class="num">第 {{ step.page }} 页</td>
+                <td>{{ step['copy'] }}</td>
+                <td>
+                  {% if step.move.startswith('空拍') %}
+                    <span class="turn-mark">{{ step.move }}</span>
+                  {% else %}
+                    <span class="stay-mark">{{ step.move }}</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <p class="legend">底色标出的步之前有空拍，需要翻页；其余步与上一步同页。</p>
+      </div>
+
+    {% elif outcome and outcome.status == 'unsolvable' %}
+      <div class="card">
+        <div class="unsolvable" role="alert">
+          {{ outcome.message }}
+        </div>
+        {% if outcome.last_good %}
+          <div class="lastgood">
+            <strong>上次排法不可用。</strong>{{ outcome.last_good.message }}
+            {% if outcome.last_good.steps %}
+              下面仍列出上次排法的页与步骤，供核对；这些页不能直接用于当前演奏顺序。
+            {% endif %}
+            <ul class="metrics">
+              <li>上次页数 <b>{{ outcome.last_good.total_pages }}</b></li>
+              <li>页面重印 <b>{{ outcome.last_good.reprints }}</b> 处</li>
+            </ul>
+          </div>
+          <h3>上次排法（仅供参考，已不可用）</h3>
+          <div class="pages">
+            {% for page in outcome.last_good.pages %}
+            <article class="pagecard">
+              <div class="pg-head">
+                <span class="pg-title">第 {{ page.number }} 页</span>
+                <span class="pg-meta">用行 {{ page.lines_used }} / {{ page.capacity }}</span>
+              </div>
+              {% if page.reprint %}
+                <div class="reprinted">页首重印第 {{ page.reprint }} 小节</div>
+              {% endif %}
+              <div class="sections">
+                {% for section in page.sections %}
+                  <span class="section-chip">第 {{ section }} 小节</span>
+                {% endfor %}
+              </div>
+            </article>
+            {% endfor %}
+          </div>
+          {% if outcome.last_good.steps %}
+          <div class="table-wrap">
+            <table class="steps">
+              <thead><tr><th>步</th><th>小节</th><th>页</th><th>用哪份印本</th></tr></thead>
+              <tbody>
+                {% for step in outcome.last_good.steps %}
+                <tr>
+                  <td class="num">{{ step.number }}</td>
+                  <td class="num">第 {{ step.section }} 小节</td>
+                  <td class="num">第 {{ step.page }} 页</td>
+                  <td>{{ step['copy'] }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% endif %}
+          <p class="hint">调整小节行数、每页容量、演奏顺序或锁页数后重新排页。锁定页不会因重排而改变。</p>
+        {% endif %}
+      </div>
+
+    {% else %}
+      <div class="card">
+        <h2>怎么用</h2>
+        <p>左侧填写每个小节的谱面行数、每页能排几行，再按实际演奏顺序录入小节编号。两步之间有空拍就勾选，表示乐手可以趁那里翻一页。</p>
+        <p>排好后，右侧给出页数最少的排法：每页排了哪些小节、页首重印了什么，以及演奏时每一步该看第几页、用正文还是重印本。</p>
+        <p class="hint">排过一次后，可以把已印的前几页锁定，改动演奏顺序再排；被锁定的页会原样保留。</p>
+      </div>
+    {% endif %}
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var maxSections = {{ max_sections }};
+  var maxSteps = {{ max_steps }};
+
+  var sectionRows = document.getElementById("section-rows");
+  var stepRows = document.getElementById("step-rows");
+  var sectionCount = document.getElementById("section-count");
+  var stepCount = document.getElementById("step-count");
+
+  function renumberSections() {
+    var rows = sectionRows.querySelectorAll(".section-row");
+    rows.forEach(function (row, index) {
+      row.querySelector(".index").textContent = (index + 1) + ".";
+      var input = row.querySelector('input[name="line"]');
+      input.setAttribute("aria-label", "第 " + (index + 1) + " 小节的谱面行数");
+    });
+    sectionCount.textContent = "已填 " + rows.length + " 节";
+    return rows.length;
+  }
+
+  function renumberSteps() {
+    var rows = stepRows.querySelectorAll(".step-row");
+    rows.forEach(function (row, index) {
+      row.querySelector(".index").textContent = (index + 1) + ".";
+      var input = row.querySelector('input[name="step"]');
+      input.setAttribute("aria-label", "第 " + (index + 1) + " 步演奏的小节");
+      var remove = row.querySelector("[data-remove-step]");
+      if (remove) remove.setAttribute("aria-label", "删除第 " + (index + 1) + " 步");
+      var restRow = row.nextElementSibling;
+      var isRest = restRow && restRow.classList.contains("rest-row");
+      if (index === rows.length - 1) {
+        if (isRest) restRow.remove();
+      } else {
+        if (!isRest) {
+          restRow = document.createElement("div");
+          restRow.className = "rest-row";
+          restRow.innerHTML = '<input type="checkbox"> <label></label>';
+          row.after(restRow);
+        }
+        var box = restRow.querySelector('input[type="checkbox"]');
+        var label = restRow.querySelector("label");
+        var name = "rest_" + (index + 1);
+        box.name = name;
+        box.id = name;
+        label.setAttribute("for", name);
+        label.textContent = "第 " + (index + 1) + " 步之后有空拍，可翻一页";
+      }
+    });
+    stepCount.textContent = "已填 " + rows.length + " 步";
+    return rows.length;
+  }
+
+  document.querySelector("[data-add-section]").addEventListener("click", function () {
+    var count = sectionRows.querySelectorAll(".section-row").length;
+    if (count >= maxSections) return;
+    var row = document.createElement("div");
+    row.className = "row section-row";
+    row.innerHTML = '<span class="index"></span>' +
+      '<input type="number" name="line" value="8" min="1" max="60" step="1" required>' +
+      '<span class="unit">行</span>';
+    sectionRows.appendChild(row);
+    renumberSections();
+    var inputs = sectionRows.querySelectorAll('input[name="line"]');
+    inputs[inputs.length - 1].focus();
+  });
+
+  document.querySelector("[data-remove-section]").addEventListener("click", function () {
+    var rows = sectionRows.querySelectorAll(".section-row");
+    if (rows.length <= 1) return;
+    rows[rows.length - 1].remove();
+    renumberSections();
+  });
+
+  document.querySelector("[data-add-step]").addEventListener("click", function () {
+    var count = stepRows.querySelectorAll(".step-row").length;
+    if (count >= maxSteps) return;
+    var row = document.createElement("div");
+    row.className = "row step-row";
+    row.innerHTML = '<span class="index"></span>' +
+      '<input type="number" name="step" value="1" min="1" max="' + maxSections + '" step="1" required>' +
+      '<span class="unit">小节</span>' +
+      '<button type="button" class="icon" data-remove-step>✕</button>';
+    stepRows.appendChild(row);
+    renumberSteps();
+    var inputs = stepRows.querySelectorAll('input[name="step"]');
+    inputs[inputs.length - 1].focus();
+  });
+
+  stepRows.addEventListener("click", function (event) {
+    var button = event.target.closest("[data-remove-step]");
+    if (!button) return;
+    var row = button.closest(".step-row");
+    var rows = stepRows.querySelectorAll(".step-row");
+    if (rows.length <= 1) return;
+    row.remove();
+    renumberSteps();
+  });
+
+  document.querySelector("[data-remove-last-step]").addEventListener("click", function () {
+    var rows = stepRows.querySelectorAll(".step-row");
+    if (rows.length <= 1) return;
+    rows[rows.length - 1].remove();
+    renumberSteps();
+  });
+
+  document.getElementById("clear-lock").addEventListener("click", function () {
+    var lock = document.getElementById("lock_count");
+    lock.value = "0";
+  });
+
+  renumberSections();
+  renumberSteps();
+})();
+</script>
+</body>
+</html>
